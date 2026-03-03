@@ -1,0 +1,19 @@
+Home- Additional delegation sub tab
+
+Onboarding - Entirely new section
+
+TimeTracker- Additional tab of Team, which shows time tracking of other team members. 
+
+Project- New section for the company projects 
+
+HR Letters : The admin can add adress proof and other proofs for any other employee on behalf of them whereas a normal employee user can only add of his own. 
+
+Employee Engagement: Admin can create surveys for the company. 
+
+Compensation: New Section
+
+Operations: New Section
+
+Settings: New section
+
+

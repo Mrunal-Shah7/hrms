@@ -1,0 +1,1336 @@
+// ============================================================================
+// ⚠️  SYNC WARNING: Any changes to tenant models (everything below the
+//     "TENANT SCHEMA TABLES" section) MUST also be applied to:
+//       prisma/tenant-schema.sql
+//     That DDL is used by TenantProvisioningService to create real tenant
+//     schemas. Prisma migrations only affect the 'public' schema template.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// PLATFORM SCHEMA TABLES
+// These live in the "platform" PostgreSQL schema.
+// Model names are prefixed with "Platform" for clarity in code.
+// @@map() directs them to their actual table names.
+// ============================================================================
+
+model PlatformTenant {
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String   @db.VarChar(255)
+  slug              String   @unique @db.VarChar(100)
+  customDomain      String?  @map("custom_domain") @db.VarChar(255)
+  schemaName        String   @unique @map("schema_name") @db.VarChar(100)
+  subscriptionTier  String   @map("subscription_tier") @db.VarChar(50)
+  maxUsers          Int      @map("max_users")
+  currentUserCount  Int      @default(0) @map("current_user_count")
+  billingEmail      String   @map("billing_email") @db.VarChar(255)
+  status            String   @default("active") @db.VarChar(20)
+  registrationSource String  @map("registration_source") @db.VarChar(50)
+  trialEndsAt       DateTime? @map("trial_ends_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  billingRecords       PlatformBillingRecord[]
+  registrationRequests PlatformRegistrationRequest[]
+
+  @@map("tenants")
+}
+
+model PlatformSuperAdmin {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  name         String   @db.VarChar(255)
+  isActive     Boolean  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  sessions PlatformSuperAdminSession[]
+  otps     PlatformSuperAdminOtp[]
+
+  @@map("super_admins")
+}
+
+model PlatformSuperAdminOtp {
+  id           String   @id @default(uuid()) @db.Uuid
+  superAdminId String   @map("super_admin_id") @db.Uuid
+  otpHash      String   @map("otp_hash") @db.VarChar(255)
+  expiresAt    DateTime @map("expires_at")
+  used         Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  superAdmin PlatformSuperAdmin @relation(fields: [superAdminId], references: [id], onDelete: Cascade)
+
+  @@map("super_admin_otps")
+}
+
+model PlatformSuperAdminSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  superAdminId    String   @map("super_admin_id") @db.Uuid
+  refreshTokenHash String  @map("refresh_token_hash") @db.VarChar(255)
+  deviceInfo      Json     @map("device_info")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  superAdmin PlatformSuperAdmin @relation(fields: [superAdminId], references: [id], onDelete: Cascade)
+
+  @@map("super_admin_sessions")
+}
+
+model PlatformBillingRecord {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  periodStart DateTime @map("period_start") @db.Date
+  periodEnd   DateTime @map("period_end") @db.Date
+  userCount   Int      @map("user_count")
+  perUserRate Decimal  @map("per_user_rate") @db.Decimal(10, 2)
+  tier        String   @db.VarChar(50)
+  totalAmount Decimal  @map("total_amount") @db.Decimal(10, 2)
+  status      String   @db.VarChar(20)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant PlatformTenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("billing_records")
+}
+
+model PlatformRegistrationRequest {
+  id                     String   @id @default(uuid()) @db.Uuid
+  organizationName       String   @map("organization_name") @db.VarChar(255)
+  slug                   String   @db.VarChar(100)
+  adminName              String   @map("admin_name") @db.VarChar(255)
+  adminEmail             String   @map("admin_email") @db.VarChar(255)
+  adminPasswordHash      String   @map("admin_password_hash") @db.VarChar(255)
+  subscriptionTier       String   @map("subscription_tier") @db.VarChar(50)
+  maxUsers               Int      @default(10) @map("max_users")
+  emailVerificationToken String   @map("email_verification_token") @db.VarChar(255)
+  emailVerified          Boolean  @default(false) @map("email_verified")
+  status                 String   @default("pending") @db.VarChar(20)
+  tenantId               String?  @map("tenant_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+  verifiedAt             DateTime? @map("verified_at")
+  provisionedAt          DateTime? @map("provisioned_at")
+
+  tenant PlatformTenant? @relation(fields: [tenantId], references: [id])
+
+  @@map("registration_requests")
+}
+
+// ============================================================================
+// TENANT SCHEMA TABLES
+// ============================================================================
+
+model User {
+  id                String   @id @default(uuid()) @db.Uuid
+  employeeId        String?  @unique @map("employee_id") @db.VarChar(50)
+  email             String   @unique @db.VarChar(255)
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  firstName         String   @map("first_name") @db.VarChar(100)
+  lastName          String   @map("last_name") @db.VarChar(100)
+  displayName       String?  @map("display_name") @db.VarChar(100)
+  phone             String?  @db.VarChar(20)
+  photoUrl          String?  @map("photo_url") @db.Text
+  emailDomainType   String   @default("company") @map("email_domain_type") @db.VarChar(20)
+  status            String   @default("active") @db.VarChar(20)
+  mustResetPassword Boolean  @default(true) @map("must_reset_password")
+  lastLoginAt       DateTime? @map("last_login_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  passwordResetOtps  PasswordResetOtp[]
+  userSessions       UserSession[]
+  userRoles          UserRole[]
+  userPreference     UserPreference?
+  employeeProfile    EmployeeProfile?
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  fileStorage        FileStorage[]
+  leaveBalances      LeaveBalance[]
+  leaveRequests      LeaveRequest[]
+  leaveReviews       LeaveRequest[]    @relation("LeaveReviewer")
+  timeLogs           TimeLog[]
+  goals              Goal[]            @relation("GoalAssignee")
+  goalsCreated       Goal[]            @relation("GoalCreator")
+  goalProgress       GoalProgressHistory[]
+  performanceReviews PerformanceReview[] @relation("ReviewSubject")
+  reviewsGiven       PerformanceReview[] @relation("ReviewReviewer")
+  fileRecords        FileRecord[]
+  fileShares         FileShare[]
+  employeeSalaries   EmployeeSalary[]
+  payslips           Payslip[]
+  appraisalSubject   AppraisalRecord[] @relation("AppraisalSubject")
+  appraisalReviewer  AppraisalRecord[] @relation("AppraisalReviewer")
+
+  @@index([email])
+  @@index([status])
+  @@map("users")
+}
+
+model PasswordResetOtp {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  otpHash   String   @map("otp_hash") @db.VarChar(255)
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_otps")
+}
+
+model UserSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  refreshTokenHash String  @map("refresh_token_hash") @db.VarChar(255)
+  deviceInfo      Json     @map("device_info")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+model UserPreference {
+  id                      String   @id @default(uuid()) @db.Uuid
+  userId                  String   @unique @map("user_id") @db.Uuid
+  dateFormat              String?  @map("date_format") @db.VarChar(20)
+  timezone                String?  @db.VarChar(50)
+  language                String   @default("en") @db.VarChar(10)
+  profilePictureVisibility String  @default("everyone") @map("profile_picture_visibility") @db.VarChar(20)
+  newSignInAlert          Boolean  @default(true) @map("new_sign_in_alert")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  module      String   @db.VarChar(100)
+  action      String   @db.VarChar(100)
+  resource    String   @db.VarChar(100)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action, resource])
+  @@map("permissions")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  isSystemRole Boolean @default(false) @map("is_system_role")
+  isCustom    Boolean  @default(false) @map("is_custom")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedBy String?  @map("assigned_by") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model FileStorage {
+  id           String   @id @default(uuid()) @db.Uuid
+  fileName     String   @map("file_name") @db.VarChar(255)
+  originalName String   @map("original_name") @db.VarChar(255)
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+  fileSize     BigInt   @map("file_size")
+  data         Bytes?
+  uploadedBy   String   @map("uploaded_by") @db.Uuid
+  context      String?  @db.VarChar(100)
+  contextId    String?  @map("context_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  uploader User @relation(fields: [uploadedBy], references: [id])
+
+  @@map("file_storage")
+}
+
+model EmailConfig {
+  id        String   @id @default(uuid()) @db.Uuid
+  provider  String   @db.VarChar(20)
+  config    Json
+  fromEmail String   @map("from_email") @db.VarChar(255)
+  fromName  String   @map("from_name") @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("email_config")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String   @db.VarChar(100)
+  title     String   @db.VarChar(255)
+  message   String   @db.Text
+  data      Json?
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model NotificationSetting {
+  id               String  @id @default(uuid()) @db.Uuid
+  notificationType String  @unique @map("notification_type") @db.VarChar(100)
+  emailEnabled     Boolean @default(true) @map("email_enabled")
+  inAppEnabled     Boolean @default(true) @map("in_app_enabled")
+
+  @@map("notification_settings")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(50)
+  module     String   @db.VarChar(100)
+  entityType String   @map("entity_type") @db.VarChar(100)
+  entityId   String   @map("entity_id") @db.Uuid
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+model OrganizationSettings {
+  id                    String  @id @default(uuid()) @db.Uuid
+  orgName               String  @map("org_name") @db.VarChar(255)
+  customDomain          String? @map("custom_domain") @db.VarChar(255)
+  companyEmailDomain    String? @map("company_email_domain") @db.VarChar(255)
+  defaultTimezone       String  @default("UTC") @map("default_timezone") @db.VarChar(50)
+  dateFormat            String  @default("DD-MMM-YYYY") @map("date_format") @db.VarChar(20)
+  financialYearStartMonth Int   @default(1) @map("financial_year_start_month")
+  defaultCurrency       String  @default("USD") @map("default_currency") @db.VarChar(10)
+
+  @@map("organization_settings")
+}
+
+model Department {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @db.VarChar(255)
+  code            String   @unique @db.VarChar(50)
+  mailAlias       String?  @map("mail_alias") @db.VarChar(255)
+  headId          String?  @map("head_id") @db.Uuid
+  parentId        String?  @map("parent_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children  Department[] @relation("DepartmentHierarchy")
+  employees EmployeeProfile[]
+
+  @@map("departments")
+}
+
+model Designation {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String   @db.VarChar(255)
+  code           String   @unique @db.VarChar(50)
+  hierarchyLevel Int      @default(0) @map("hierarchy_level")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  employees EmployeeProfile[]
+
+  @@map("designations")
+}
+
+model EmployeeProfile {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @map("user_id") @db.Uuid
+  departmentId        String?  @map("department_id") @db.Uuid
+  designationId       String?  @map("designation_id") @db.Uuid
+  reportsTo           String?  @map("reports_to") @db.Uuid
+  employmentType      String   @map("employment_type") @db.VarChar(20)
+  dateOfJoining       DateTime @map("date_of_joining") @db.Date
+  dateOfBirth         DateTime? @map("date_of_birth") @db.Date
+  gender              String?  @db.VarChar(20)
+  maritalStatus       String?  @map("marital_status") @db.VarChar(20)
+  bloodGroup          String?  @map("blood_group") @db.VarChar(10)
+  emergencyContactName  String? @map("emergency_contact_name") @db.VarChar(255)
+  emergencyContactPhone String? @map("emergency_contact_phone") @db.VarChar(20)
+  emergencyContactRelation String? @map("emergency_contact_relation") @db.VarChar(50)
+  presentAddress      Json?    @map("present_address")
+  permanentAddress    Json?    @map("permanent_address")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department  Department?  @relation(fields: [departmentId], references: [id])
+  designation Designation? @relation(fields: [designationId], references: [id])
+
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([reportsTo])
+  @@map("employee_profiles")
+}
+
+model ReportingHierarchy {
+  id              String @id @default(uuid()) @db.Uuid
+  designationId   String @map("designation_id") @db.Uuid
+  reportsToDesignationId String? @map("reports_to_designation_id") @db.Uuid
+  level           Int    @default(0)
+
+  @@unique([designationId])
+  @@map("reporting_hierarchy")
+}
+
+model Group {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(255)
+  description String?  @db.Text
+  createdBy   String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members GroupMember[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String   @id @default(uuid()) @db.Uuid
+  groupId  String   @map("group_id") @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  addedAt  DateTime @default(now()) @map("added_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("group_members")
+}
+
+model Project {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(255)
+  description String?   @db.Text
+  managerId   String    @map("manager_id") @db.Uuid
+  budget      Decimal?  @db.Decimal(12, 2)
+  startDate   DateTime? @map("start_date") @db.Date
+  endDate     DateTime? @map("end_date") @db.Date
+  status      String    @default("active") @db.VarChar(20)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  members ProjectMember[]
+  tasks   ProjectTask[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String?  @db.VarChar(50)
+  addedAt   DateTime @default(now()) @map("added_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model ProjectTask {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  title       String    @db.VarChar(255)
+  description String?   @db.Text
+  assigneeId  String?   @map("assignee_id") @db.Uuid
+  status      String    @default("todo") @db.VarChar(20)
+  priority    String    @default("medium") @db.VarChar(20)
+  dueDate     DateTime? @map("due_date") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_tasks")
+}
+
+model Delegation {
+  id          String    @id @default(uuid()) @db.Uuid
+  delegatorId String    @map("delegator_id") @db.Uuid
+  delegateeId String    @map("delegatee_id") @db.Uuid
+  type        String    @db.VarChar(100)
+  description String?   @db.Text
+  startDate   DateTime  @map("start_date") @db.Date
+  endDate     DateTime? @map("end_date") @db.Date
+  status      String    @default("active") @db.VarChar(20)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("delegations")
+}
+
+model LeaveType {
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String   @db.VarChar(100)
+  code               String   @unique @db.VarChar(20)
+  color              String?  @db.VarChar(7)
+  icon               String?  @db.VarChar(50)
+  isPaid             Boolean  @default(true) @map("is_paid")
+  maxConsecutiveDays Int?     @map("max_consecutive_days")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  policies LeavePolicy[]
+  balances LeaveBalance[]
+  requests LeaveRequest[]
+
+  @@map("leave_types")
+}
+
+model LeavePolicy {
+  id               String   @id @default(uuid()) @db.Uuid
+  leaveTypeId      String   @map("leave_type_id") @db.Uuid
+  designationId    String?  @map("designation_id") @db.Uuid
+  departmentId     String?  @map("department_id") @db.Uuid
+  employmentType   String?  @map("employment_type") @db.VarChar(20)
+  annualAllocation Float    @map("annual_allocation")
+  carryForward     Boolean  @default(false) @map("carry_forward")
+  maxCarryForward  Float?   @map("max_carry_forward")
+  accrualType      String   @default("annual") @map("accrual_type") @db.VarChar(20)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@map("leave_policies")
+}
+
+model LeaveBalance {
+  id             String @id @default(uuid()) @db.Uuid
+  userId         String @map("user_id") @db.Uuid
+  leaveTypeId    String @map("leave_type_id") @db.Uuid
+  year           Int
+  totalAllocated Float  @default(0) @map("total_allocated")
+  carriedForward Float  @default(0) @map("carried_forward")
+  used           Float  @default(0)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, leaveTypeId, year])
+  @@index([userId, year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  leaveTypeId  String   @map("leave_type_id") @db.Uuid
+  startDate    DateTime @map("start_date") @db.Date
+  endDate      DateTime @map("end_date") @db.Date
+  durationType String   @default("full_day") @map("duration_type") @db.VarChar(20)
+  totalDays    Float    @map("total_days")
+  reason       String?  @db.Text
+  status       String   @default("pending") @db.VarChar(20)
+  reviewedBy   String?  @map("reviewed_by") @db.Uuid
+  reviewComment String? @map("review_comment") @db.Text
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  reviewer  User?     @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("leave_requests")
+}
+
+model Holiday {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  date      DateTime @db.Date
+  isOptional Boolean @default(false) @map("is_optional")
+  year      Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("holidays")
+}
+
+model TimeTrackerConfig {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(100)
+  provider     String   @db.VarChar(50)
+  config       Json
+  isActive     Boolean  @default(true) @map("is_active")
+  syncFrequency String  @default("hourly") @map("sync_frequency") @db.VarChar(20)
+  lastSyncAt   DateTime? @map("last_sync_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("time_tracker_config")
+}
+
+model TimeLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  punchType  String   @map("punch_type") @db.VarChar(10)
+  punchTime  DateTime @map("punch_time")
+  source     String   @db.VarChar(50)
+  rawData    Json?    @map("raw_data")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, punchTime])
+  @@map("time_logs")
+}
+
+model DailyTimeSummary {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  date           DateTime @db.Date
+  firstPunchIn   DateTime? @map("first_punch_in")
+  lastPunchOut   DateTime? @map("last_punch_out")
+  totalHours     Float    @default(0) @map("total_hours")
+  effectiveHours Float    @default(0) @map("effective_hours")
+  overtimeHours  Float    @default(0) @map("overtime_hours")
+  status         String   @default("present") @db.VarChar(20)
+  isLate         Boolean  @default(false) @map("is_late")
+  isEarlyDeparture Boolean @default(false) @map("is_early_departure")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("daily_time_summary")
+}
+
+model WorkSchedule {
+  id                  String   @id @default(uuid()) @db.Uuid
+  name                String   @db.VarChar(100)
+  startTime           String   @map("start_time") @db.VarChar(5)
+  endTime             String   @map("end_time") @db.VarChar(5)
+  workingDays         Json     @map("working_days")
+  gracePeriodMinutes  Int      @default(0) @map("grace_period_minutes")
+  minHoursFullDay     Float    @default(8) @map("min_hours_full_day")
+  minHoursHalfDay     Float    @default(4) @map("min_hours_half_day")
+  overtimeThresholdHours Float @default(9) @map("overtime_threshold_hours")
+  isDefault           Boolean  @default(false) @map("is_default")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("work_schedule")
+}
+
+model AttendanceRegularization {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  date        DateTime @db.Date
+  reason      String   @db.Text
+  punchIn     String?  @map("punch_in") @db.VarChar(5)
+  punchOut    String?  @map("punch_out") @db.VarChar(5)
+  status      String   @default("pending") @db.VarChar(20)
+  reviewedBy  String?  @map("reviewed_by") @db.Uuid
+  reviewedAt  DateTime? @map("reviewed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("attendance_regularizations")
+}
+
+model Goal {
+  id              String   @id @default(uuid()) @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?  @db.Text
+  assignedToId    String   @map("assigned_to_id") @db.Uuid
+  assignedToType  String   @default("user") @map("assigned_to_type") @db.VarChar(20)
+  createdById     String   @map("created_by_id") @db.Uuid
+  priority        String   @default("medium") @db.VarChar(20)
+  status          String   @default("not_started") @db.VarChar(20)
+  progress        Int      @default(0)
+  startDate       DateTime? @map("start_date") @db.Date
+  dueDate         DateTime? @map("due_date") @db.Date
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  assignee   User @relation("GoalAssignee", fields: [assignedToId], references: [id])
+  creator    User @relation("GoalCreator", fields: [createdById], references: [id])
+  progressHistory GoalProgressHistory[]
+
+  @@index([assignedToId])
+  @@map("goals")
+}
+
+model GoalProgressHistory {
+  id        String   @id @default(uuid()) @db.Uuid
+  goalId    String   @map("goal_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  oldProgress Int    @map("old_progress")
+  newProgress Int    @map("new_progress")
+  note      String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("goal_progress_history")
+}
+
+model PerformanceReviewCycle {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(255)
+  type        String    @db.VarChar(20)
+  startDate   DateTime  @map("start_date") @db.Date
+  endDate     DateTime  @map("end_date") @db.Date
+  status      String    @default("draft") @db.VarChar(20)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  reviews PerformanceReview[]
+
+  @@map("performance_review_cycles")
+}
+
+model PerformanceReview {
+  id          String   @id @default(uuid()) @db.Uuid
+  cycleId     String   @map("cycle_id") @db.Uuid
+  subjectId   String   @map("subject_id") @db.Uuid
+  reviewerId  String   @map("reviewer_id") @db.Uuid
+  rating      Int?
+  comments    String?  @db.Text
+  strengths   String?  @db.Text
+  improvements String? @db.Text
+  status      String   @default("pending") @db.VarChar(20)
+  submittedAt DateTime? @map("submitted_at")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  cycle    PerformanceReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  subject  User @relation("ReviewSubject", fields: [subjectId], references: [id])
+  reviewer User @relation("ReviewReviewer", fields: [reviewerId], references: [id])
+
+  @@map("performance_reviews")
+}
+
+model FileRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @db.VarChar(255)
+  mimeType   String   @map("mime_type") @db.VarChar(100)
+  fileSize   BigInt   @map("file_size")
+  storageId  String   @map("storage_id") @db.Uuid
+  folderId   String?  @map("folder_id") @db.Uuid
+  scope      String   @default("personal") @db.VarChar(20)
+  ownerId    String   @map("owner_id") @db.Uuid
+  departmentId String? @map("department_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  owner  User        @relation(fields: [ownerId], references: [id])
+  folder FileFolder? @relation(fields: [folderId], references: [id])
+  shares FileShare[]
+
+  @@map("file_records")
+}
+
+model FileFolder {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  parentId  String?  @map("parent_id") @db.Uuid
+  scope     String   @default("personal") @db.VarChar(20)
+  ownerId   String   @map("owner_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   FileFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children FileFolder[] @relation("FolderHierarchy")
+  files    FileRecord[]
+
+  @@map("file_folders")
+}
+
+model FileShare {
+  id           String   @id @default(uuid()) @db.Uuid
+  fileRecordId String   @map("file_record_id") @db.Uuid
+  sharedWithId String   @map("shared_with_id") @db.Uuid
+  permission   String   @default("view") @db.VarChar(20)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  fileRecord FileRecord @relation(fields: [fileRecordId], references: [id], onDelete: Cascade)
+  sharedWith User       @relation(fields: [sharedWithId], references: [id])
+
+  @@unique([fileRecordId, sharedWithId])
+  @@map("file_shares")
+}
+
+model SalaryComponent {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @db.VarChar(255)
+  code       String   @unique @db.VarChar(50)
+  type       String   @db.VarChar(20)
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  breakdowns SalaryBreakdown[]
+
+  @@map("salary_components")
+}
+
+model EmployeeSalary {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  ctc         Decimal  @db.Decimal(12, 2)
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  breakdowns SalaryBreakdown[]
+
+  @@map("employee_salaries")
+}
+
+model SalaryBreakdown {
+  id               String  @id @default(uuid()) @db.Uuid
+  employeeSalaryId String  @map("employee_salary_id") @db.Uuid
+  componentId      String  @map("component_id") @db.Uuid
+  amount           Decimal @db.Decimal(12, 2)
+
+  employeeSalary EmployeeSalary @relation(fields: [employeeSalaryId], references: [id], onDelete: Cascade)
+  component      SalaryComponent @relation(fields: [componentId], references: [id])
+
+  @@map("salary_breakdowns")
+}
+
+model Payslip {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  month       Int
+  year        Int
+  grossPay    Decimal  @map("gross_pay") @db.Decimal(12, 2)
+  deductions  Decimal  @db.Decimal(12, 2)
+  netPay      Decimal  @map("net_pay") @db.Decimal(12, 2)
+  breakdown   Json
+  pdfStorageId String? @map("pdf_storage_id") @db.Uuid
+  generatedAt DateTime @default(now()) @map("generated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month, year])
+  @@map("payslips")
+}
+
+model AppraisalRecord {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  reviewerId    String   @map("reviewer_id") @db.Uuid
+  effectiveDate DateTime @map("effective_date") @db.Date
+  previousCtc   Decimal  @map("previous_ctc") @db.Decimal(12, 2)
+  newCtc        Decimal  @map("new_ctc") @db.Decimal(12, 2)
+  incrementPercent Float @map("increment_percent")
+  comments      String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  subject  User @relation("AppraisalSubject", fields: [userId], references: [id])
+  reviewer User @relation("AppraisalReviewer", fields: [reviewerId], references: [id])
+
+  @@map("appraisal_records")
+}
+
+model JobOpening {
+  id              String   @id @default(uuid()) @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?  @db.Text
+  departmentId    String?  @map("department_id") @db.Uuid
+  designationId   String?  @map("designation_id") @db.Uuid
+  employmentType  String   @map("employment_type") @db.VarChar(20)
+  experience      String?  @db.VarChar(50)
+  salaryRange     Json?    @map("salary_range")
+  location        String?  @db.VarChar(255)
+  openings        Int      @default(1)
+  status          String   @default("draft") @db.VarChar(20)
+  publishToken    String?  @unique @map("publish_token") @db.VarChar(100)
+  publishedAt     DateTime? @map("published_at")
+  closedAt        DateTime? @map("closed_at")
+  createdBy       String   @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  candidates Candidate[]
+  interviews Interview[]
+
+  @@map("job_openings")
+}
+
+model CandidateStage {
+  id          String @id @default(uuid()) @db.Uuid
+  name        String @db.VarChar(100)
+  orderIndex  Int    @map("order_index")
+  color       String? @db.VarChar(7)
+  isDefault   Boolean @default(false) @map("is_default")
+
+  candidates Candidate[]
+  stageHistory CandidateStageHistory[]
+
+  @@map("candidate_stages")
+}
+
+model Candidate {
+  id             String   @id @default(uuid()) @db.Uuid
+  jobOpeningId   String   @map("job_opening_id") @db.Uuid
+  stageId        String   @map("stage_id") @db.Uuid
+  firstName      String   @map("first_name") @db.VarChar(100)
+  lastName       String   @map("last_name") @db.VarChar(100)
+  email          String   @db.VarChar(255)
+  phone          String?  @db.VarChar(20)
+  resumeStorageId String? @map("resume_storage_id") @db.Uuid
+  coverLetter    String?  @map("cover_letter") @db.Text
+  source         String?  @db.VarChar(50)
+  ownerId        String?  @map("owner_id") @db.Uuid
+  rating         Int?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  jobOpening   JobOpening @relation(fields: [jobOpeningId], references: [id], onDelete: Cascade)
+  stage        CandidateStage @relation(fields: [stageId], references: [id])
+  stageHistory CandidateStageHistory[]
+  notes        CandidateNote[]
+  interviews   Interview[]
+  submissions  AssessmentSubmission[]
+  offerLetters OfferLetter[]
+
+  @@index([jobOpeningId])
+  @@index([stageId])
+  @@map("candidates")
+}
+
+model CandidateStageHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  candidateId String   @map("candidate_id") @db.Uuid
+  stageId     String   @map("stage_id") @db.Uuid
+  movedBy     String   @map("moved_by") @db.Uuid
+  movedAt     DateTime @default(now()) @map("moved_at")
+  note        String?  @db.Text
+
+  candidate Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  stage     CandidateStage @relation(fields: [stageId], references: [id])
+
+  @@map("candidate_stage_history")
+}
+
+model CandidateNote {
+  id          String   @id @default(uuid()) @db.Uuid
+  candidateId String   @map("candidate_id") @db.Uuid
+  authorId    String   @map("author_id") @db.Uuid
+  content     String   @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("candidate_notes")
+}
+
+model Interview {
+  id            String   @id @default(uuid()) @db.Uuid
+  jobOpeningId  String   @map("job_opening_id") @db.Uuid
+  candidateId   String   @map("candidate_id") @db.Uuid
+  scheduledAt   DateTime @map("scheduled_at")
+  durationMinutes Int    @default(60) @map("duration_minutes")
+  type          String   @db.VarChar(50)
+  location      String?  @db.VarChar(255)
+  meetingLink   String?  @map("meeting_link") @db.Text
+  status        String   @default("scheduled") @db.VarChar(20)
+  notes         String?  @db.Text
+  createdBy     String   @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  jobOpening JobOpening @relation(fields: [jobOpeningId], references: [id])
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  feedback   InterviewFeedback[]
+
+  @@map("interviews")
+}
+
+model InterviewFeedback {
+  id           String   @id @default(uuid()) @db.Uuid
+  interviewId  String   @map("interview_id") @db.Uuid
+  interviewerId String  @map("interviewer_id") @db.Uuid
+  rating       Int?
+  recommendation String? @db.VarChar(20)
+  comments     String?  @db.Text
+  submittedAt  DateTime? @map("submitted_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@map("interview_feedback")
+}
+
+model Assessment {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String   @db.VarChar(255)
+  description String?  @db.Text
+  timeLimitMinutes Int? @map("time_limit_minutes")
+  createdBy   String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  questions   AssessmentQuestion[]
+  submissions AssessmentSubmission[]
+
+  @@map("assessments")
+}
+
+model AssessmentQuestion {
+  id           String @id @default(uuid()) @db.Uuid
+  assessmentId String @map("assessment_id") @db.Uuid
+  type         String @db.VarChar(20)
+  question     String @db.Text
+  options      Json?
+  correctAnswer String? @map("correct_answer") @db.Text
+  points       Int    @default(1)
+  orderIndex   Int    @map("order_index")
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_questions")
+}
+
+model AssessmentSubmission {
+  id           String   @id @default(uuid()) @db.Uuid
+  assessmentId String   @map("assessment_id") @db.Uuid
+  candidateId  String   @map("candidate_id") @db.Uuid
+  answers      Json
+  score        Int?
+  status       String   @default("pending") @db.VarChar(20)
+  submittedAt  DateTime? @map("submitted_at")
+  evaluatedBy  String?  @map("evaluated_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_submissions")
+}
+
+model Referral {
+  id          String   @id @default(uuid()) @db.Uuid
+  candidateId String?  @map("candidate_id") @db.Uuid
+  jobOpeningId String? @map("job_opening_id") @db.Uuid
+  referredById String  @map("referred_by_id") @db.Uuid
+  candidateName String @map("candidate_name") @db.VarChar(255)
+  candidateEmail String @map("candidate_email") @db.VarChar(255)
+  candidatePhone String? @map("candidate_phone") @db.VarChar(20)
+  notes       String?  @db.Text
+  status      String   @default("submitted") @db.VarChar(20)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("referrals")
+}
+
+model OfferLetter {
+  id          String   @id @default(uuid()) @db.Uuid
+  candidateId String   @map("candidate_id") @db.Uuid
+  designation String   @db.VarChar(255)
+  ctcOffered  Decimal  @map("ctc_offered") @db.Decimal(12, 2)
+  joiningDate DateTime @map("joining_date") @db.Date
+  content     String   @db.Text
+  pdfStorageId String? @map("pdf_storage_id") @db.Uuid
+  status      String   @default("draft") @db.VarChar(20)
+  sentAt      DateTime? @map("sent_at")
+  respondedAt DateTime? @map("responded_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("offer_letters")
+}
+
+model RecruitmentEmailCampaign {
+  id          String   @id @default(uuid()) @db.Uuid
+  subject     String   @db.VarChar(255)
+  body        String   @db.Text
+  candidateIds Json    @map("candidate_ids")
+  sentBy      String   @map("sent_by") @db.Uuid
+  sentAt      DateTime @default(now()) @map("sent_at")
+  status      String   @default("sent") @db.VarChar(20)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("recruitment_email_campaigns")
+}
+
+model OnboardingTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  checklistItems OnboardingChecklistItem[]
+  records        OnboardingRecord[]
+
+  @@map("onboarding_templates")
+}
+
+model OnboardingChecklistItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  templateId  String  @map("template_id") @db.Uuid
+  title       String  @db.VarChar(255)
+  description String? @db.Text
+  isRequired  Boolean @default(true) @map("is_required")
+  orderIndex  Int     @map("order_index")
+
+  template  OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  progress  OnboardingChecklistProgress[]
+
+  @@map("onboarding_checklist_items")
+}
+
+model OnboardingRecord {
+  id              String   @id @default(uuid()) @db.Uuid
+  templateId      String   @map("template_id") @db.Uuid
+  candidateName   String   @map("candidate_name") @db.VarChar(255)
+  candidateEmail  String   @map("candidate_email") @db.VarChar(255)
+  candidatePhone  String?  @map("candidate_phone") @db.VarChar(20)
+  departmentId    String?  @map("department_id") @db.Uuid
+  designationId   String?  @map("designation_id") @db.Uuid
+  source          String?  @db.VarChar(50)
+  candidateId     String?  @map("candidate_id") @db.Uuid
+  personalDetails Json?    @map("personal_details")
+  sensitiveFields Json?    @map("sensitive_fields")
+  status          String   @default("pending") @db.VarChar(20)
+  convertedUserId String?  @map("converted_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  template       OnboardingTemplate @relation(fields: [templateId], references: [id])
+  checklistProgress OnboardingChecklistProgress[]
+
+  @@map("onboarding_records")
+}
+
+model OnboardingChecklistProgress {
+  id              String   @id @default(uuid()) @db.Uuid
+  onboardingId    String   @map("onboarding_id") @db.Uuid
+  checklistItemId String   @map("checklist_item_id") @db.Uuid
+  isCompleted     Boolean  @default(false) @map("is_completed")
+  completedBy     String?  @map("completed_by") @db.Uuid
+  completedAt     DateTime? @map("completed_at")
+  notes           String?  @db.Text
+
+  onboardingRecord OnboardingRecord       @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  checklistItem    OnboardingChecklistItem @relation(fields: [checklistItemId], references: [id])
+
+  @@unique([onboardingId, checklistItemId])
+  @@map("onboarding_checklist_progress")
+}
+
+model OffboardingTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  preferences     OffboardingTemplatePreference[]
+  clearances      OffboardingClearance[]
+  exitInterviews  OffboardingExitInterviewTemplate[]
+  requiredDocs    OffboardingRequiredDocument[]
+  workflowTriggers OffboardingWorkflowTrigger[]
+  records         OffboardingRecord[]
+
+  @@map("offboarding_templates")
+}
+
+model OffboardingTemplatePreference {
+  id              String @id @default(uuid()) @db.Uuid
+  templateId      String @map("template_id") @db.Uuid
+  noticePeriodDays Int   @default(30) @map("notice_period_days")
+  approvalChain   Json   @map("approval_chain")
+
+  template OffboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_template_preferences")
+}
+
+model OffboardingClearance {
+  id          String @id @default(uuid()) @db.Uuid
+  templateId  String @map("template_id") @db.Uuid
+  name        String @db.VarChar(255)
+  assignedTo  String @map("assigned_to") @db.VarChar(100)
+  orderIndex  Int    @map("order_index")
+  fields      Json?
+
+  template OffboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_clearances")
+}
+
+model OffboardingExitInterviewTemplate {
+  id         String @id @default(uuid()) @db.Uuid
+  templateId String @map("template_id") @db.Uuid
+
+  template  OffboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  questions ExitInterviewQuestion[]
+
+  @@map("offboarding_exit_interview_templates")
+}
+
+model ExitInterviewQuestion {
+  id                   String @id @default(uuid()) @db.Uuid
+  exitInterviewTemplateId String @map("exit_interview_template_id") @db.Uuid
+  question             String @db.Text
+  type                 String @db.VarChar(20)
+  options              Json?
+  orderIndex           Int    @map("order_index")
+
+  exitInterviewTemplate OffboardingExitInterviewTemplate @relation(fields: [exitInterviewTemplateId], references: [id], onDelete: Cascade)
+
+  @@map("exit_interview_questions")
+}
+
+model OffboardingRequiredDocument {
+  id         String @id @default(uuid()) @db.Uuid
+  templateId String @map("template_id") @db.Uuid
+  name       String @db.VarChar(255)
+  isRequired Boolean @default(true) @map("is_required")
+
+  template OffboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_required_documents")
+}
+
+model OffboardingWorkflowTrigger {
+  id          String @id @default(uuid()) @db.Uuid
+  templateId  String @map("template_id") @db.Uuid
+  event       String @db.VarChar(100)
+  action      String @db.VarChar(100)
+  config      Json?
+
+  template OffboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_workflow_triggers")
+}
+
+model OffboardingRecord {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  templateId        String   @map("template_id") @db.Uuid
+  type              String   @db.VarChar(20)
+  reason            String?  @db.Text
+  lastWorkingDate   DateTime? @map("last_working_date") @db.Date
+  status            String   @default("initiated") @db.VarChar(20)
+  currentStep       String   @default("preferences") @map("current_step") @db.VarChar(20)
+  approvedBy        String?  @map("approved_by") @db.Uuid
+  approvedAt        DateTime? @map("approved_at")
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  template           OffboardingTemplate @relation(fields: [templateId], references: [id])
+  clearanceProgress  OffboardingClearanceProgress[]
+  exitInterviewResponses ExitInterviewResponse[]
+  documents          OffboardingDocument[]
+
+  @@map("offboarding_records")
+}
+
+model OffboardingClearanceProgress {
+  id              String   @id @default(uuid()) @db.Uuid
+  offboardingId   String   @map("offboarding_id") @db.Uuid
+  clearanceName   String   @map("clearance_name") @db.VarChar(255)
+  status          String   @default("pending") @db.VarChar(20)
+  clearedBy       String?  @map("cleared_by") @db.Uuid
+  clearedAt       DateTime? @map("cleared_at")
+  notes           String?  @db.Text
+
+  offboardingRecord OffboardingRecord @relation(fields: [offboardingId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_clearance_progress")
+}
+
+model ExitInterviewResponse {
+  id            String @id @default(uuid()) @db.Uuid
+  offboardingId String @map("offboarding_id") @db.Uuid
+  questionId    String @map("question_id") @db.Uuid
+  response      String @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  offboardingRecord OffboardingRecord @relation(fields: [offboardingId], references: [id], onDelete: Cascade)
+
+  @@map("exit_interview_responses")
+}
+
+model OffboardingDocument {
+  id            String   @id @default(uuid()) @db.Uuid
+  offboardingId String   @map("offboarding_id") @db.Uuid
+  name          String   @db.VarChar(255)
+  storageId     String   @map("storage_id") @db.Uuid
+  uploadedBy    String   @map("uploaded_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  offboardingRecord OffboardingRecord @relation(fields: [offboardingId], references: [id], onDelete: Cascade)
+
+  @@map("offboarding_documents")
+}
+
+model DataRetentionConfig {
+  id                String @id @default(uuid()) @db.Uuid
+  retentionDays     Int    @default(365) @map("retention_days")
+  autoDeleteEnabled Boolean @default(false) @map("auto_delete_enabled")
+
+  @@map("data_retention_config")
+}
