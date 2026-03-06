@@ -157,7 +157,6 @@ model User {
   leaveRequests      LeaveRequest[]
   leaveReviews       LeaveRequest[]    @relation("LeaveReviewer")
   timeLogs           TimeLog[]
-  goals              Goal[]            @relation("GoalAssignee")
   goalsCreated       Goal[]            @relation("GoalCreator")
   goalProgress       GoalProgressHistory[]
   performanceReviews PerformanceReview[] @relation("ReviewSubject")
@@ -579,6 +578,7 @@ model LeaveRequest {
   durationType String   @default("full_day") @map("duration_type") @db.VarChar(20)
   totalDays    Float    @map("total_days")
   reason       String?  @db.Text
+  teamEmail    String?  @map("team_email") @db.VarChar(255)
   status       String   @default("pending") @db.VarChar(20)
   reviewedBy   String?  @map("reviewed_by") @db.Uuid
   reviewComment String? @map("review_comment") @db.Text
@@ -704,7 +704,7 @@ model Goal {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  assignee   User @relation("GoalAssignee", fields: [assignedToId], references: [id])
+  // assignedToId is polymorphic: user | group | project — no FK; resolve via raw queries
   creator    User @relation("GoalCreator", fields: [createdById], references: [id])
   progressHistory GoalProgressHistory[]
 

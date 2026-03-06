@@ -1,0 +1,54 @@
+{
+  "version": 3,
+  "skills": {
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/agent-skills.git",
+      "skillFolderHash": "",
+      "installedAt": "2026-01-29T11:03:21.429Z",
+      "updatedAt": "2026-01-29T11:03:21.429Z"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/skills.git",
+      "skillFolderHash": "",
+      "installedAt": "2026-01-29T11:03:33.654Z",
+      "updatedAt": "2026-01-29T11:03:33.654Z"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/agent-skills.git",
+      "skillFolderHash": "",
+      "installedAt": "2026-01-29T11:05:04.129Z",
+      "updatedAt": "2026-01-29T11:05:04.129Z"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anthropics/skills.git",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "skillFolderHash": "928950704df8a8b885c03de5da626331e6f29cf8",
+      "pluginName": "example-skills",
+      "installedAt": "2026-02-27T22:43:41.402Z",
+      "updatedAt": "2026-02-27T22:43:41.402Z"
+    }
+  },
+  "dismissed": {
+    "findSkillsPrompt": true
+  },
+  "lastSelectedAgents": [
+    "amp",
+    "cline",
+    "codex",
+    "cursor",
+    "gemini-cli",
+    "github-copilot",
+    "kimi-cli",
+    "opencode",
+    "claude-code",
+    "antigravity"
+  ]
+}

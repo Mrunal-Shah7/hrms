@@ -72,10 +72,38 @@ function buildWarnings(
 export class TenantDashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Get actual non-archived user count from tenant schema and correct
+   * platform.tenants.current_user_count if it has drifted.
+   */
+  private async getActualUserCountAndFixDrift(
+    tenantId: string,
+    schemaName: string,
+    storedCount: number,
+  ): Promise<number> {
+    const countRows = await this.prisma.withTenantSchema(schemaName, (tx) =>
+      tx.$queryRawUnsafe<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text as count FROM users WHERE status != 'archived'`,
+      ),
+    );
+    const actual = parseInt(countRows[0]?.count ?? '0', 10);
+    if (actual !== storedCount) {
+      await this.prisma.withPlatformSchema(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `UPDATE tenants SET current_user_count = $1, updated_at = NOW() WHERE id = $2::uuid`,
+          actual,
+          tenantId,
+        );
+      });
+    }
+    return actual;
+  }
+
   async getDashboardData(
     tenantId: string,
     schemaName: string,
     roles: string[],
+    userId?: string,
   ): Promise<{
     subscription: SubscriptionData | null;
     quickStats: {
@@ -107,18 +135,23 @@ export class TenantDashboardService {
 
       if (rows.length > 0) {
         const r = rows[0];
+        const currentUserCount = await this.getActualUserCountAndFixDrift(
+          tenantId,
+          schemaName,
+          r.current_user_count,
+        );
         const maxUsers = r.max_users || 1;
-        const util = Math.round((r.current_user_count / maxUsers) * 100);
+        const util = Math.round((currentUserCount / maxUsers) * 100);
         const warnings = buildWarnings(
           r.status,
           r.trial_ends_at,
-          r.current_user_count,
+          currentUserCount,
           r.max_users,
         );
 
         subscription = {
           tier: r.subscription_tier,
-          currentUserCount: r.current_user_count,
+          currentUserCount,
           maxUsers: r.max_users,
           utilizationPercent: util,
           status: r.status,
@@ -129,23 +162,55 @@ export class TenantDashboardService {
     }
 
     let totalEmployees: number | null = null;
+    let pendingLeaveRequests: number | null = null;
+    let activeGoals: number | null = null;
     try {
-      const countRows = (await this.prisma.withTenantSchema(schemaName, async (tx) => {
-        return tx.$queryRawUnsafe(
-          `SELECT COUNT(*)::bigint as count FROM users WHERE status = 'active'`,
+      const queries: Promise<unknown>[] = [
+        this.prisma.withTenantSchema(schemaName, (tx) =>
+          tx.$queryRawUnsafe<Array<{ count: bigint }>>(
+            `SELECT COUNT(*)::bigint as count FROM users WHERE status = 'active'`,
+          ),
+        ),
+        this.prisma.withTenantSchema(schemaName, (tx) =>
+          tx.$queryRawUnsafe<Array<{ count: string }>>(
+            `SELECT COUNT(*)::text as count FROM leave_requests WHERE status = 'pending'`,
+          ),
+        ),
+      ];
+      if (userId) {
+        queries.push(
+          this.prisma.withTenantSchema(schemaName, (tx) =>
+            tx.$queryRawUnsafe<Array<{ count: string }>>(
+              `SELECT COUNT(*)::text as count FROM goals g
+               WHERE g.status IN ('not_started', 'in_progress')
+                 AND (
+                   (g.assigned_to_type = 'user' AND g.assigned_to_id = $1::uuid)
+                   OR (g.assigned_to_type = 'group' AND EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.assigned_to_id AND gm.user_id = $1::uuid))
+                   OR (g.assigned_to_type = 'project' AND EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = g.assigned_to_id AND pm.user_id = $1::uuid))
+                 )`,
+              userId,
+            ),
+          ),
         );
-      })) as Array<{ count: bigint }>;
-      totalEmployees = countRows?.[0] ? Number(countRows[0].count) : 0;
+      }
+      const results = await Promise.all(queries);
+      totalEmployees = (results[0] as Array<{ count: bigint }>)?.[0] ? Number((results[0] as Array<{ count: bigint }>)[0].count) : 0;
+      pendingLeaveRequests = (results[1] as Array<{ count: string }>)?.[0] ? parseInt((results[1] as Array<{ count: string }>)[0].count, 10) : 0;
+      if (userId && results[2]) {
+        activeGoals = (results[2] as Array<{ count: string }>)?.[0] ? parseInt((results[2] as Array<{ count: string }>)[0].count, 10) : 0;
+      }
     } catch {
       totalEmployees = null;
+      pendingLeaveRequests = null;
+      activeGoals = null;
     }
 
     return {
       subscription,
       quickStats: {
         totalEmployees,
-        pendingLeaveRequests: null,
-        activeGoals: null,
+        pendingLeaveRequests,
+        activeGoals,
         openJobOpenings: null,
       },
     };
@@ -170,9 +235,10 @@ export class TenantDashboardService {
           subscription_tier: string;
           status: string;
           trial_ends_at: Date | null;
+          schema_name: string;
         }>
       >(
-        `SELECT current_user_count, max_users, subscription_tier, status, trial_ends_at
+        `SELECT current_user_count, max_users, subscription_tier, status, trial_ends_at, schema_name
          FROM tenants WHERE id = $1::uuid LIMIT 1`,
         tenantId,
       );
@@ -181,16 +247,21 @@ export class TenantDashboardService {
     if (rows.length === 0) return null;
 
     const r = rows[0];
+    const currentUserCount = await this.getActualUserCountAndFixDrift(
+      tenantId,
+      r.schema_name,
+      r.current_user_count,
+    );
     const warnings = buildWarnings(
       r.status,
       r.trial_ends_at,
-      r.current_user_count,
+      currentUserCount,
       r.max_users,
     );
 
     return {
       tier: r.subscription_tier,
-      currentUserCount: r.current_user_count,
+      currentUserCount,
       maxUsers: r.max_users,
       status: r.status,
       trialEndsAt: r.trial_ends_at ? r.trial_ends_at.toISOString() : null,

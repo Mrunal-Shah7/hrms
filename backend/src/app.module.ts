@@ -31,6 +31,10 @@ import { ReportingHierarchyModule } from './reporting-hierarchy/reporting-hierar
 import { GroupsModule } from './groups/groups.module';
 import { ProjectsModule } from './projects/projects.module';
 import { DelegationsModule } from './delegations/delegations.module';
+import { LeaveModule } from './leave/leave.module';
+import { TimeTrackerModule } from './time-tracker/time-tracker.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { PerformanceModule } from './performance/performance.module';
 import { TenantMiddleware } from './common/middleware/tenant.middleware';
 import { SubscriptionTierGuard } from './common/guards/subscription-tier.guard';
 import { SeatLimitGuard } from './common/guards/seat-limit.guard';
@@ -65,6 +69,10 @@ import { SeatLimitGuard } from './common/guards/seat-limit.guard';
     GroupsModule,
     ProjectsModule,
     DelegationsModule,
+    LeaveModule,
+    TimeTrackerModule,
+    AttendanceModule,
+    PerformanceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: CustomThrottlerGuard },

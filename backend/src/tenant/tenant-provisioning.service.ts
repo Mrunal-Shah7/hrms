@@ -79,6 +79,9 @@ export class TenantProvisioningService {
       await this.seedWorkSchedule(schemaName);
       this.logger.log(`Step 4d: Work schedule seeded`);
 
+      await this.seedTimeTrackerMockConfig(schemaName);
+      this.logger.log(`Step 4d2: Time tracker mock integration seeded`);
+
       await this.seedCandidateStages(schemaName);
       this.logger.log(`Step 4e: Candidate pipeline stages seeded`);
 
@@ -195,6 +198,22 @@ export class TenantProvisioningService {
     await this.prisma.executeRaw(
       `INSERT INTO "${schemaName}".work_schedule (id, name, start_time, end_time, working_days, grace_period_minutes, min_hours_full_day, min_hours_half_day, overtime_threshold_hours, is_default, created_at, updated_at)
        VALUES (gen_random_uuid(), '${ws.name}', '${ws.startTime}', '${ws.endTime}', '${workingDaysJson}', ${ws.gracePeriodMinutes}, ${ws.minHoursFullDay}, ${ws.minHoursHalfDay}, ${ws.overtimeThresholdHours}, ${ws.isDefault}, NOW(), NOW())`,
+    );
+  }
+
+  private async seedTimeTrackerMockConfig(schemaName: string): Promise<void> {
+    const configJson = JSON.stringify({
+      daysToGenerate: 30,
+      punchVarianceMinutes: 30,
+      missedPunchRate: 0.05,
+      absentRate: 0.03,
+      overtimeRate: 0.1,
+      lateArrivalRate: 0.15,
+      employeeMatchField: 'employee_id',
+    }).replace(/'/g, "''");
+    await this.prisma.executeRaw(
+      `INSERT INTO "${schemaName}".time_tracker_config (id, name, provider, config, is_active, sync_frequency, last_sync_at, created_at, updated_at)
+       VALUES (gen_random_uuid(), 'Mock Tracker (Development)', 'mock', '${configJson}'::jsonb, true, 'daily', NULL, NOW(), NOW())`,
     );
   }
 

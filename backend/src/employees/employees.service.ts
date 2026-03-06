@@ -10,6 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../core/email/email.service';
 import { NotificationService } from '../core/notification/notification.service';
 import { ExportService } from '../core/export/export.service';
+import { BalanceEngineService } from '../leave/balances/balance-engine.service';
+import { getLeaveYear } from '../leave/utils/leave-year.util';
 import { TenantInfo } from '../tenant/tenant.interface';
 import * as bcrypt from 'bcrypt';
 import type { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -60,6 +62,7 @@ export class EmployeesService {
     private readonly emailService: EmailService,
     private readonly notificationService: NotificationService,
     private readonly exportService: ExportService,
+    private readonly balanceEngineService: BalanceEngineService,
   ) {}
 
   private async insertAuditLog(
@@ -474,6 +477,21 @@ export class EmployeesService {
       );
     } catch (err) {
       console.warn('Failed to create welcome notification:', (err as Error).message);
+    }
+
+    try {
+      const fyRows = await this.prisma.withTenantSchema(tenant.schemaName, async (tx) => {
+        return tx.$queryRawUnsafe<Array<{ financial_year_start_month: number }>>(
+          `SELECT financial_year_start_month FROM organization_settings LIMIT 1`,
+        );
+      });
+      const fyMonth = fyRows[0]?.financial_year_start_month ?? 1;
+      const currentLeaveYear = getLeaveYear(new Date(), fyMonth);
+      await this.balanceEngineService.generateBalancesForYear(tenant.schemaName, currentLeaveYear, {
+        userId: result.id,
+      });
+    } catch (err) {
+      console.warn('Failed to generate leave balances for new employee:', (err as Error).message);
     }
 
     return result;

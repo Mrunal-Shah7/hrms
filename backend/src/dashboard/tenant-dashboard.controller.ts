@@ -25,6 +25,7 @@ export class TenantDashboardController {
       tenant.id,
       tenant.schemaName,
       roles ?? [],
+      _userId,
     );
     return { success: true, data };
   }

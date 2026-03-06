@@ -10,6 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../core/email/email.service';
 import { NotificationService } from '../../core/notification/notification.service';
+import { BalanceEngineService } from '../../leave/balances/balance-engine.service';
+import { getLeaveYear } from '../../leave/utils/leave-year.util';
 import { TenantInfo } from '../../tenant/tenant.interface';
 import {
   type EmployeeImportRow,
@@ -78,6 +80,7 @@ export class ImportService {
     private readonly config: ConfigService,
     private readonly emailService: EmailService,
     private readonly notificationService: NotificationService,
+    private readonly balanceEngineService: BalanceEngineService,
   ) {}
 
   getTemplateCsv(): Buffer {
@@ -179,7 +182,7 @@ export class ImportService {
     dryRun: boolean,
   ): Promise<{
     summary: { totalRows: number; imported?: number; skipped?: number; errors: number; wouldImport?: number; wouldSkip?: number };
-    imported?: Array<{ row: number; employeeId: string; email: string; name: string }>;
+    imported?: Array<{ row: number; employeeId: string; email: string; name: string; id?: string }>;
     errors: ValidationError[];
     dryRun?: boolean;
   }> {
@@ -303,7 +306,7 @@ export class ImportService {
     }
 
     const orgName = tenant.name;
-    const imported: Array<{ row: number; employeeId: string; email: string; name: string }> = [];
+    const imported: Array<{ row: number; employeeId: string; email: string; name: string; id: string }> = [];
 
     const lastEmp = await this.prisma.withTenantSchema(tenant.schemaName, (tx) =>
       tx.$queryRawUnsafe<Array<{ employee_id: string }>>(
@@ -420,6 +423,7 @@ export class ImportService {
           employeeId,
           email: row.email,
           name: displayName,
+          id: userUuid,
         });
 
         if (sendWelcomeEmails) {
@@ -488,6 +492,29 @@ export class ImportService {
         );
       });
     });
+
+    if (imported.length > 0) {
+      try {
+        const fyRows = await this.prisma.withTenantSchema(tenant.schemaName, async (tx) => {
+          return tx.$queryRawUnsafe<Array<{ financial_year_start_month: number }>>(
+            `SELECT financial_year_start_month FROM organization_settings LIMIT 1`,
+          );
+        });
+        const fyMonth = fyRows[0]?.financial_year_start_month ?? 1;
+        const currentLeaveYear = getLeaveYear(new Date(), fyMonth);
+        for (const imp of imported) {
+          try {
+            await this.balanceEngineService.generateBalancesForYear(tenant.schemaName, currentLeaveYear, {
+              userId: imp.id,
+            });
+          } catch (err) {
+            console.warn(`Leave balance generation failed for imported employee ${imp.email}:`, (err as Error).message);
+          }
+        }
+      } catch (err) {
+        console.warn('Leave balance generation after import failed:', (err as Error).message);
+      }
+    }
 
     return {
       summary: {
